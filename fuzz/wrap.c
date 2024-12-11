@@ -35,6 +35,9 @@ static const char *user_ptr = NULL;
 static struct pam_conv *conv_ptr = NULL;
 static uint8_t *wiredata_ptr = NULL;
 static size_t wiredata_len = 0;
+static int latest_conf_path_fd = -1;
+static int latest_conf_file_fd = -1;
+static int conf_file_fd = -1;
 static int authfile_fd = -1;
 static char env[] = "value";
 
@@ -56,6 +59,7 @@ void set_wiredata(uint8_t *data, size_t len) {
 }
 void set_user(const char *user) { user_ptr = user; }
 void set_conv(struct pam_conv *conv) { conv_ptr = conv; }
+void set_conf_file_fd(int fd) { conf_file_fd = fd; }
 void set_authfile(int fd) { authfile_fd = fd; }
 
 WRAP(int, close, (int fd), -1, (fd))
@@ -65,7 +69,6 @@ WRAP(void *, malloc, (size_t size), NULL, (size))
 WRAP(int, gethostname, (char *name, size_t len), -1, (name, len))
 WRAP(ssize_t, getline, (char **s, size_t *n, FILE *fp), -1, (s, n, fp))
 WRAP(FILE *, fdopen, (int fd, const char *mode), NULL, (fd, mode))
-WRAP(int, fstat, (int fd, struct stat *st), -1, (fd, st))
 WRAP(BIO *, BIO_new, (const BIO_METHOD *type), NULL, (type))
 WRAP(int, BIO_write, (BIO * b, const void *data, int len), -1, (b, data, len))
 WRAP(int, BIO_read, (BIO * b, void *data, int len), -1, (b, data, len))
@@ -81,6 +84,23 @@ extern ssize_t __wrap_read(int fildes, void *buf, size_t nbyte) {
   assert(fildes >= 0);
   assert(buf != NULL);
   return __real_read(fildes, buf, nbyte);
+}
+
+extern int __real_fstat(int fildes, struct stat *buf);
+extern int __wrap_fstat(int fildes, struct stat *buf);
+extern int __wrap_fstat(int fildes, struct stat *buf) {
+  int r;
+
+  assert(fildes >= 0);
+  assert(buf != NULL);
+
+  r = __real_fstat(fildes, buf);
+  if (!r && (fildes == latest_conf_file_fd || fildes == latest_conf_path_fd)) {
+    buf->st_uid = 0;
+    buf->st_mode &= ~(S_IWGRP | S_IWOTH);
+  }
+
+  return r;
 }
 
 extern int __wrap_asprintf(char **strp, const char *fmt, ...)
@@ -106,22 +126,44 @@ extern uid_t __wrap_geteuid(void) {
   return (uniform_random(10) < 1) ? 0 : 1008;
 }
 
+extern int __real_openat(int fd, const char *path, int oflag, ...);
+extern int __wrap_openat(int fd, const char *path, int oflag, ...);
+extern int __wrap_openat(int fd, const char *path, int oflag, ...) {
+  (void) path;
+
+  assert(fd == latest_conf_path_fd);
+  if (oflag & O_DIRECTORY) {
+    latest_conf_path_fd = dup(latest_conf_path_fd);
+    return latest_conf_path_fd;
+  }
+
+  latest_conf_file_fd = dup(conf_file_fd);
+  return latest_conf_file_fd;
+}
+
 extern int __real_open(const char *pathname, int flags);
 extern int __wrap_open(const char *pathname, int flags);
 extern int __wrap_open(const char *pathname, int flags) {
+
   if (prng_up && uniform_random(400) < 1)
     return -1;
+
   /* open write-only files as /dev/null */
   if ((flags & O_ACCMODE) == O_WRONLY)
     return __real_open("/dev/null", flags);
+
+  assert((flags & O_ACCMODE) == O_RDONLY);
+
   /* FIXME: special handling for /dev/random */
   if (strcmp(pathname, "/dev/urandom") == 0)
     return __real_open(pathname, flags);
-  /* open read-only files using a shared fd for the authfile */
-  if ((flags & O_ACCMODE) == O_RDONLY)
-    return dup(authfile_fd);
-  assert(0); /* unsupported */
-  return -1;
+
+  if (strcmp(pathname, "/") == 0) {
+    latest_conf_path_fd = __real_open("/", flags);
+    return latest_conf_path_fd;
+  }
+
+  return dup(authfile_fd);
 }
 
 extern int __wrap_getpwuid_r(uid_t, struct passwd *, char *, size_t,
