@@ -59,6 +59,20 @@ AC_ARG_WITH(pam-dir,
 ])
 AC_SUBST(PAMDIR, "$PAMDIR")
 
+SCONFDIR="${sysconfdir}/security"
+AC_ARG_WITH(sconf-dir,
+  AS_HELP_STRING(
+    [--with-sconf-dir=DIR],
+    [Path to module conf file]
+  ), [
+    case "${withval}" in
+      /*) SCONFDIR="${withval}";;
+      *) AC_MSG_ERROR(expected an absolute directory name for --with-sconf-dir: ${withval});;
+    esac
+  ]
+)
+AC_SUBST(SCONFDIR, "$SCONFDIR")
+
 PKG_CHECK_MODULES([LIBCRYPTO], [libcrypto], [], [])
 PKG_CHECK_MODULES([LIBFIDO2], [libfido2 >= 1.3.0], [], [])
 
@@ -162,4 +176,5 @@ AC_MSG_NOTICE([Summary of build options:
   LIBCRYPTO CFLAGS:    $LIBCRYPTO_CFLAGS
   LIBCRYPTO LIBS:      $LIBCRYPTO_LIBS
   PAMDIR:              $PAMDIR
+  SCONFDIR:            $SCONFDIR
 ])
