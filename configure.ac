@@ -115,6 +115,7 @@ AC_CONFIG_FILES([
   tests/Makefile
   fuzz/Makefile
   man/Makefile
+  man/pam_u2f.8.txt
 ])
 
 creduser=$(whoami)
