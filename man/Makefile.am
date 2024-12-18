@@ -4,6 +4,7 @@ dist_man1_MANS = pamu2fcfg.1
 dist_man8_MANS = pam_u2f.8
 MAINTAINERCLEANFILES = $(MANS)
 EXTRA_DIST = $(MANS:=.txt)
+DISTCLEANFILES = pam_u2f.8
 
 SUFFIXES = .1.txt .1 .8.txt .8
 

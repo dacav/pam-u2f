@@ -36,6 +36,7 @@ m4/lt~obsolete.m4
 tests/.deps/
 tests/dlsym_check
 man/pam_u2f.8
+man/pam_u2f.8.txt
 pamu2fcfg/cmdline.c
 pamu2fcfg/cmdline.h
 pamu2fcfg/pamu2fcfg
