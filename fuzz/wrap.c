@@ -35,9 +35,9 @@ static const char *user_ptr = NULL;
 static struct pam_conv *conv_ptr = NULL;
 static uint8_t *wiredata_ptr = NULL;
 static size_t wiredata_len = 0;
-static const char *conf_file_path = NULL;
+static int latest_conf_path_fd = -1;
+static int latest_conf_file_fd = -1;
 static int conf_file_fd = -1;
-static int conf_file_fd_lastdup = -1;
 static int authfile_fd = -1;
 static char env[] = "value";
 
@@ -59,7 +59,6 @@ void set_wiredata(uint8_t *data, size_t len) {
 }
 void set_user(const char *user) { user_ptr = user; }
 void set_conv(struct pam_conv *conv) { conv_ptr = conv; }
-void set_conf_file_path(const char *path) { conf_file_path = path; }
 void set_conf_file_fd(int fd) { conf_file_fd = fd; }
 void set_authfile(int fd) { authfile_fd = fd; }
 
@@ -88,7 +87,7 @@ extern int __wrap_fstat(int fildes, struct stat *buf) {
   assert(buf != NULL);
 
   r = __real_fstat(fildes, buf);
-  if (!r && (fildes == conf_file_fd_lastdup)) {
+  if (!r && (fildes == latest_conf_file_fd || fildes == latest_conf_path_fd)) {
     buf->st_uid = 0;
     buf->st_mode &= ~(S_IWGRP | S_IWOTH);
   }
@@ -127,6 +126,21 @@ extern uid_t __wrap_geteuid(void) {
   return (uniform_random(10) < 1) ? 0 : 1008;
 }
 
+extern int __real_openat(int fd, const char *path, int oflag, ...);
+extern int __wrap_openat(int fd, const char *path, int oflag, ...);
+extern int __wrap_openat(int fd, const char *path, int oflag, ...) {
+  (void) path;
+
+  assert(fd == latest_conf_path_fd);
+  if (oflag & O_DIRECTORY) {
+    latest_conf_path_fd = dup(latest_conf_path_fd);
+    return latest_conf_path_fd;
+  }
+
+  latest_conf_file_fd = dup(conf_file_fd);
+  return latest_conf_file_fd;
+}
+
 extern int __real_open(const char *pathname, int flags);
 extern int __wrap_open(const char *pathname, int flags);
 extern int __wrap_open(const char *pathname, int flags) {
@@ -144,10 +158,9 @@ extern int __wrap_open(const char *pathname, int flags) {
   if (strcmp(pathname, "/dev/urandom") == 0)
     return __real_open(pathname, flags);
 
-  if (conf_file_path && strcmp(pathname, conf_file_path) == 0) {
-    assert(*pathname == '/'); /* should not load config from relative path */
-    conf_file_fd_lastdup = dup(conf_file_fd);
-    return conf_file_fd_lastdup;
+  if (strcmp(pathname, "/") == 0) {
+    latest_conf_path_fd = __real_open("/", flags);
+    return latest_conf_path_fd;
   }
 
   return dup(authfile_fd);

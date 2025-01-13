@@ -6,4 +6,3 @@ set_conv
 set_user
 set_wiredata
 set_conf_file_fd
-set_conf_file_path

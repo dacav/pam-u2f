@@ -260,21 +260,9 @@ static int prepare_authfile(const unsigned char *data, size_t len) {
   return fd;
 }
 
-static int prepare_conf_file(const struct blob *conf_file, int argc,
-                             const char **argv, const char **conf_file_path) {
-  int i, fd;
+static int prepare_conf_file(const struct blob *conf_file) {
+  int fd;
   ssize_t w;
-
-  *conf_file_path = CFG_DEFAULT_PATH;
-  for (i = 0; i < argc; i++) {
-    const char *value;
-
-    if (strncmp(argv[i], "conf=", strlen("conf=")))
-      continue;
-
-    value = argv[i] + strlen("conf=");
-    *conf_file_path = value;
-  }
 
   if ((fd = memfd_create("pam_u2f.conf", MFD_CLOEXEC)) == -1)
     return -1;
@@ -298,7 +286,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   struct param *param = NULL;
   struct pam_conv conv;
   struct conv_appdata conv_data;
-  const char *argv[32], *conf_file_path;
+  const char *argv[32];
   int argc = 32;
   int authfile_fd = -1, conf_file_fd = -1;
 
@@ -325,10 +313,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
   prepare_argv(param->conf, &argv[0], &argc);
 
-  if ((conf_file_fd = prepare_conf_file(&param->conf_file, argc, argv,
-                                        &conf_file_path)) == -1)
+  if ((conf_file_fd = prepare_conf_file(&param->conf_file)) == -1)
     goto err;
-  set_conf_file_path(conf_file_path);
   set_conf_file_fd(conf_file_fd);
 
   pam_sm_authenticate((void *) FUZZ_PAM_HANDLE, 0, argc, argv);
