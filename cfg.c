@@ -106,7 +106,9 @@ static int slurp(int fd, size_t to_read, char **dst) {
 // Returns PAM_SERVICE_ERR on error, and PAM_SUCCESS on success.
 //
 static int open_safely(int *outfd, size_t *outsize, const char *path) {
-  int fd;
+  char *copy, *saveptr = NULL;
+  int fd = -1, parent_fd, r = PAM_SERVICE_ERR;
+  const char *p, *c;
   size_t len;
   struct stat st;
 
@@ -114,32 +116,71 @@ static int open_safely(int *outfd, size_t *outsize, const char *path) {
   if (!len || path[0] != '/' || path[len - 1] == '/')
     return PAM_SERVICE_ERR;
 
-  fd = open(path, O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NOFOLLOW, 0);
-  if (fd == -1) {
-    if (errno == ENOENT) {
-      *outfd = -1;
-      return PAM_SUCCESS;
+  copy = strdup(path);
+  if (!copy)
+    return PAM_BUF_ERR;
+
+  p = strtok_r(copy, "/", &saveptr);
+  parent_fd = open("/", O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW , 0);
+  if (parent_fd == -1)
+    goto exit;
+
+  *outfd = -1;
+  *outsize = 0;
+
+  while ((c = strtok_r(NULL, "/", &saveptr)) != NULL) {
+    fd =
+      openat(parent_fd, p, O_RDONLY | O_CLOEXEC | O_DIRECTORY, 0);
+    if (fd == -1) {
+      if (errno == ENOENT)
+        r = PAM_SUCCESS;
+      goto exit;
     }
-    return PAM_SERVICE_ERR;
+
+    if (fstat(fd, &st))
+      goto exit;
+
+#ifndef PAM_U2F_TESTING
+    if (st.st_uid != 0)
+      goto exit;
+#endif
+    if (!(S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode)) || st.st_mode & (S_IWGRP | S_IWOTH))
+      goto exit;
+
+    close(parent_fd);
+    parent_fd = fd;
+    p = c;
+  }
+
+  fd = openat(parent_fd, p, O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NOFOLLOW, 0);
+  if (fd == -1) {
+    if (errno == ENOENT)
+      r = PAM_SUCCESS;
+    goto exit;
   }
 
   if (fstat(fd, &st))
-    goto fail;
+    goto exit;
 
 #ifndef PAM_U2F_TESTING
   if (st.st_uid != 0)
-    goto fail;
+    goto exit;
 #endif
   if (!S_ISREG(st.st_mode) || st.st_mode & (S_IWGRP | S_IWOTH))
-    goto fail;
+    goto exit;
 
   *outfd = fd;
   *outsize = st.st_size;
-  return PAM_SUCCESS;
+  fd = -1;
+  r = PAM_SUCCESS;
 
-fail:
-  close(fd);
-  return PAM_SERVICE_ERR;
+exit:
+  if (parent_fd != -1)
+    close(parent_fd);
+  if (fd != -1)
+    close(fd);
+  free(copy);
+  return r;
 }
 
 static char *ltrim(char *s) {
